@@ -5,6 +5,22 @@ import (
 	"net"
 )
 
+// type DNSHeader struct {
+// 	id      string
+// 	qr      string
+// 	opCode  string
+// 	aa      string
+// 	tc      string
+// 	rd      string
+// 	ra      string
+// 	z       string
+// 	rCode   string
+// 	qdCount string
+// 	anCount string
+// 	nsCount string
+// 	arCount string
+// }
+
 func main() {
 	fmt.Println("Logs from your program will appear here!")
 
@@ -34,7 +50,8 @@ func main() {
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 
 		// Create an empty response
-		response := []byte{}
+		// response := []byte{}
+		response := buf[:12]
 
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
