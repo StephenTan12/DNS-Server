@@ -6,6 +6,12 @@ import (
 	"net"
 )
 
+type DomainName struct {
+	prefix string
+	domain string
+	tld    string
+}
+
 type DNSHeader struct {
 	ID      uint16
 	QR      uint8
@@ -20,6 +26,12 @@ type DNSHeader struct {
 	ANCOUNT uint16
 	NSCOUNT uint16
 	ARCOUNT uint16
+}
+
+type DNSQuestion struct {
+	domainName DomainName
+	typeRec    uint16
+	classField uint16
 }
 
 func main() {
@@ -49,9 +61,16 @@ func main() {
 
 		receivedData := string(buf[:size])
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
+		fmt.Printf("%d\n", int(receivedData[20:21][0]))
 
-		header := getHeader(1)
-		response := getFormattedHeaderResponse(header)
+		header := getHeader(buf, 1, 1)
+		question := getQuestion(receivedData)
+		formattedHeader := getFormattedHeaderResponse(header)
+		formattedQuestions := getFormattedQuestionResponse(question)
+
+		fmt.Printf("%v\n", formattedQuestions)
+
+		response := append(formattedHeader, formattedQuestions...)
 
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
@@ -60,9 +79,9 @@ func main() {
 	}
 }
 
-func getHeader(isResponse uint8) *DNSHeader {
+func getHeader(buf []byte, isResponse uint8, numQuestion uint16) *DNSHeader {
 	header := DNSHeader{
-		ID:      1234,
+		ID:      binary.BigEndian.Uint16(buf[:2]),
 		QR:      isResponse,
 		OPCODE:  0,
 		AA:      0,
@@ -71,12 +90,21 @@ func getHeader(isResponse uint8) *DNSHeader {
 		RA:      0,
 		Z:       0,
 		RCODE:   0,
-		QDCOUNT: 0,
+		QDCOUNT: numQuestion,
 		ANCOUNT: 0,
 		NSCOUNT: 0,
 		ARCOUNT: 0,
 	}
 	return &header
+}
+
+func getQuestion(data string) *DNSQuestion {
+	question := DNSQuestion{
+		domainName: getDomainName(data),
+		typeRec:    1,
+		classField: 1,
+	}
+	return &question
 }
 
 func getFormattedHeaderResponse(dnsHeader *DNSHeader) []byte {
@@ -103,4 +131,74 @@ func getFormattedHeaderResponse(dnsHeader *DNSHeader) []byte {
 	binary.BigEndian.PutUint16(buf[10:12], dnsHeader.ARCOUNT)
 
 	return buf
+}
+
+func getFormattedQuestionResponse(dnsQuestion *DNSQuestion) []byte {
+	domainName := dnsQuestion.domainName
+	sizeLabels := len(domainName.domain) + len(domainName.tld) + 3
+	buf := make([]byte, sizeLabels+4)
+
+	buf[0] = uint8(len(domainName.domain))
+
+	domainPointer := 0
+	for {
+		if domainPointer >= len(domainName.domain) {
+			break
+		}
+		buf[domainPointer+1] = uint8(domainName.domain[domainPointer])
+		domainPointer += 1
+	}
+
+	fmt.Printf("%v\n", buf)
+
+	buf[domainPointer+1] = uint8(len(domainName.tld))
+
+	tldPointerStart := domainPointer + 2
+	tldPointerEnd := 0
+
+	fmt.Printf("%v\n", buf)
+
+	for {
+		if tldPointerEnd >= len(domainName.tld) {
+			break
+		}
+		buf[tldPointerStart+tldPointerEnd] = uint8(domainName.tld[tldPointerEnd])
+		tldPointerEnd += 1
+	}
+
+	fmt.Printf("%v\n", buf)
+
+	binary.BigEndian.PutUint16(buf[sizeLabels:sizeLabels+2], dnsQuestion.typeRec)
+	binary.BigEndian.PutUint16(buf[sizeLabels+2:sizeLabels+4], dnsQuestion.classField)
+	return buf
+}
+
+func getDomainName(data string) DomainName {
+	START := 13
+	domainPointerEnd := START
+	for {
+		if int(data[domainPointerEnd]) == 3 {
+			break
+		}
+		domainPointerEnd += 1
+	}
+
+	domain := data[START:domainPointerEnd]
+
+	START = domainPointerEnd + 1
+	tldPointerEnd := START
+	for {
+		if int(data[tldPointerEnd]) == 0 {
+			break
+		}
+
+		tldPointerEnd += 1
+	}
+
+	tld := data[START:tldPointerEnd]
+
+	return DomainName{
+		domain: domain,
+		tld:    tld,
+	}
 }
