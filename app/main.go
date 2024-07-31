@@ -34,6 +34,15 @@ type DNSQuestion struct {
 	classField uint16
 }
 
+type DNSAnswer struct {
+	name       DomainName
+	typeRec    uint16
+	classField uint16
+	TTL        uint32
+	lengthData uint16
+	RDATA      uint32
+}
+
 func main() {
 	fmt.Println("Logs from your program will appear here!")
 
@@ -63,14 +72,18 @@ func main() {
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 		fmt.Printf("%d\n", int(receivedData[20:21][0]))
 
-		header := getHeader(buf, 1, 1)
+		header := getHeader(buf, 1, 1, 1)
 		question := getQuestion(receivedData)
+		answer := getAnswer(receivedData)
+
 		formattedHeader := getFormattedHeaderResponse(header)
 		formattedQuestions := getFormattedQuestionResponse(question)
+		formattedAnswers := getFormattedAnswerResponse(answer)
 
 		fmt.Printf("%v\n", formattedQuestions)
 
 		response := append(formattedHeader, formattedQuestions...)
+		response = append(response, formattedAnswers...)
 
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
@@ -79,7 +92,7 @@ func main() {
 	}
 }
 
-func getHeader(buf []byte, isResponse uint8, numQuestion uint16) *DNSHeader {
+func getHeader(buf []byte, isResponse uint8, numQuestion uint16, numAnswer uint16) *DNSHeader {
 	header := DNSHeader{
 		ID:      binary.BigEndian.Uint16(buf[:2]),
 		QR:      isResponse,
@@ -91,7 +104,7 @@ func getHeader(buf []byte, isResponse uint8, numQuestion uint16) *DNSHeader {
 		Z:       0,
 		RCODE:   0,
 		QDCOUNT: numQuestion,
-		ANCOUNT: 0,
+		ANCOUNT: numAnswer,
 		NSCOUNT: 0,
 		ARCOUNT: 0,
 	}
@@ -105,6 +118,18 @@ func getQuestion(data string) *DNSQuestion {
 		classField: 1,
 	}
 	return &question
+}
+
+func getAnswer(data string) *DNSAnswer {
+	answer := DNSAnswer{
+		name:       getDomainName(data),
+		typeRec:    1,
+		classField: 1,
+		TTL:        60,
+		lengthData: 4,
+		RDATA:      8888,
+	}
+	return &answer
 }
 
 func getFormattedHeaderResponse(dnsHeader *DNSHeader) []byte {
@@ -138,38 +163,29 @@ func getFormattedQuestionResponse(dnsQuestion *DNSQuestion) []byte {
 	sizeLabels := len(domainName.domain) + len(domainName.tld) + 3
 	buf := make([]byte, sizeLabels+4)
 
-	buf[0] = uint8(len(domainName.domain))
-
-	domainPointer := 0
-	for {
-		if domainPointer >= len(domainName.domain) {
-			break
-		}
-		buf[domainPointer+1] = uint8(domainName.domain[domainPointer])
-		domainPointer += 1
-	}
-
-	fmt.Printf("%v\n", buf)
-
-	buf[domainPointer+1] = uint8(len(domainName.tld))
-
-	tldPointerStart := domainPointer + 2
-	tldPointerEnd := 0
-
-	fmt.Printf("%v\n", buf)
-
-	for {
-		if tldPointerEnd >= len(domainName.tld) {
-			break
-		}
-		buf[tldPointerStart+tldPointerEnd] = uint8(domainName.tld[tldPointerEnd])
-		tldPointerEnd += 1
-	}
-
-	fmt.Printf("%v\n", buf)
+	encodeDomainName(domainName, &buf)
 
 	binary.BigEndian.PutUint16(buf[sizeLabels:sizeLabels+2], dnsQuestion.typeRec)
 	binary.BigEndian.PutUint16(buf[sizeLabels+2:sizeLabels+4], dnsQuestion.classField)
+	return buf
+}
+
+func getFormattedAnswerResponse(dnsAnswer *DNSAnswer) []byte {
+	domainName := dnsAnswer.name
+	sizeLabels := len(domainName.domain) + len(domainName.tld) + 3
+	buf := make([]byte, sizeLabels+16)
+
+	encodeDomainName(domainName, &buf)
+
+	binary.BigEndian.PutUint16(buf[sizeLabels:sizeLabels+2], dnsAnswer.typeRec)
+	binary.BigEndian.PutUint16(buf[sizeLabels+2:sizeLabels+4], dnsAnswer.classField)
+	binary.BigEndian.PutUint32(buf[sizeLabels+4:sizeLabels+8], dnsAnswer.TTL)
+	binary.BigEndian.PutUint16(buf[sizeLabels+8:sizeLabels+10], dnsAnswer.lengthData)
+	// binary.BigEndian.PutUint32(buf[sizeLabels+10:sizeLabels+14], "\x08\x08\x08\x08")
+	buf[sizeLabels+10] = uint8(8)
+	buf[sizeLabels+11] = uint8(8)
+	buf[sizeLabels+12] = uint8(8)
+	buf[sizeLabels+13] = uint8(8)
 	return buf
 }
 
@@ -200,5 +216,35 @@ func getDomainName(data string) DomainName {
 	return DomainName{
 		domain: domain,
 		tld:    tld,
+	}
+}
+
+func encodeDomainName(domainName DomainName, buf *[]byte) {
+	(*buf)[0] = uint8(len(domainName.domain))
+
+	domainPointer := 0
+	for {
+		if domainPointer >= len(domainName.domain) {
+			break
+		}
+		(*buf)[domainPointer+1] = uint8(domainName.domain[domainPointer])
+		domainPointer += 1
+	}
+
+	fmt.Printf("%v\n", buf)
+
+	(*buf)[domainPointer+1] = uint8(len(domainName.tld))
+
+	tldPointerStart := domainPointer + 2
+	tldPointerEnd := 0
+
+	fmt.Printf("%v\n", buf)
+
+	for {
+		if tldPointerEnd >= len(domainName.tld) {
+			break
+		}
+		(*buf)[tldPointerStart+tldPointerEnd] = uint8(domainName.tld[tldPointerEnd])
+		tldPointerEnd += 1
 	}
 }
